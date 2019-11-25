@@ -36,6 +36,8 @@ instance ToJSON Price where
 instance Show Price where
     show (Price (CoinScientific v)) = formatScientific Fixed Nothing v
 
+type BestPrice = Price
+
 newtype Size = Size { unSize :: CoinScientific }
     deriving (Eq, Ord, Num, Fractional, Real, RealFrac, Read, Data, Typeable, Generic, NFData, Hashable, FromJSON)
 instance ToJSON Size where
