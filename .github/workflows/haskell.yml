@@ -19,6 +19,6 @@ jobs:
         stack install --only-dependencies
     - name: Build
       run: |
-        stack build --enable-tests
+        stack build
     - name: Run tests
       run: stack test
