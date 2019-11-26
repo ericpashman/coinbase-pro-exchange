@@ -15,11 +15,10 @@ jobs:
         cabal-version: '3.0'
     - name: Install dependencies
       run: |
-        cabal update
-        cabal install --only-dependencies --enable-tests
+        stack update
+        stack install --only-dependencies --enable-tests
     - name: Build
       run: |
-        cabal configure --enable-tests
-        cabal build
+        stack build --enable-tests
     - name: Run tests
-      run: cabal test
+      run: stack test
