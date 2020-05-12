@@ -102,8 +102,8 @@ test-suite test-coinbase
                     ,   tasty-th
                     ,   tasty-quickcheck
                     ,   tasty-hunit
-                    , QuickCheck
-                    , quickcheck-instances
+                    ,   QuickCheck
+                    ,   quickcheck-instances
 
                     ,   uuid
                     ,   bytestring
