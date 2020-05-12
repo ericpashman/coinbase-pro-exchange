@@ -1,5 +1,5 @@
--- This comment exists only so that you can edit it if you want to run this GitHub
--- action by pushing a trivial commit.
+# This comment exists only so that you can edit it if you want to run this GitHub
+# action by pushing a trivial commit.
 
 name: Haskell CI
 
