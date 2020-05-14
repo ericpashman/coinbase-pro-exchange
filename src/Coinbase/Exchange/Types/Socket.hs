@@ -21,6 +21,7 @@ import qualified Data.HashMap.Strict          as H
 import           Data.Int
 import           Data.Text                    (Text)
 import           Data.Time
+import           Data.UUID                    (fromText)
 import qualified Data.Vector                  as V
 import           Data.Word
 import           GHC.Generics
@@ -520,7 +521,19 @@ instance FromJSON ExchangeMessage where
           Just _ -> limit <|> market
       "received" -> do
         typ  <- m .:  "order_type"
-        mcid <- m .:? "client_oid" <|> pure Nothing
+        -- The "client_oid" field is optional, present if the client supplied a
+        -- UUID to the server on order submission. For reasons unknown, the
+        -- field is sometimes set to the empty string in received messages;
+        -- we first parse into Maybe Text, then convert to a UUID if possible, 
+        -- treating the empty string as if the "client_oid" were not present.
+        mbTxt <- m .:? "client_oid"
+        let parserClientOrderId = case mbTxt of
+              Nothing  -> pure Nothing
+              Just ""  -> pure Nothing
+              Just txt -> case fromText txt of
+                Nothing   -> empty
+                Just uuid ->
+                  pure $ Just $ ClientOrderId uuid
         case typ of
           Limit  -> ReceivedLimitMsg
                       <$> m .: "time"
@@ -528,7 +541,7 @@ instance FromJSON ExchangeMessage where
                       <*> m .: "sequence"
                       <*> m .: "order_id"
                       <*> m .: "side"
-                      <*> pure (mcid :: Maybe ClientOrderId)
+                      <*> parserClientOrderId
                       <*> m .: "price"
                       <*> m .: "size"
           Market -> ReceivedMarketMsg
@@ -537,7 +550,7 @@ instance FromJSON ExchangeMessage where
                       <*> m .: "sequence"
                       <*> m .: "order_id"
                       <*> m .: "side"
-                      <*> pure mcid
+                      <*> parserClientOrderId
                       <*> (do
                         -- I can't try to parse "size" or "funds" with (.:?) here, their type is CoinScientific
                         -- but the fields may be "size":null and that will fail the (m .:? "size") parser.
