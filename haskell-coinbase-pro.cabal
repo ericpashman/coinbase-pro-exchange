@@ -30,6 +30,7 @@ library
 
     build-depends:      base    >= 4 && < 5
                     ,   mtl
+                    ,   monad-control
                     ,   resourcet
                     ,   transformers-base
                     ,   conduit
@@ -44,7 +45,6 @@ library
                     ,   time
                     ,   scientific
                     ,   uuid
-                    ,   uuid-aeson
                     ,   vector
                     ,   hashable
                     ,   deepseq
