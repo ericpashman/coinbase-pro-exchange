@@ -65,8 +65,7 @@ instance ToJSON Subscription where
     ]
 
 instance FromJSON Subscription where
-  parseJSON (Object o) = do
-    Subscription <$> o .: "name" <*> o .: "product_ids"
+  parseJSON (Object o) = Subscription <$> o .: "name" <*> o .: "product_ids"
   parseJSON _          = mzero
 
 -- TODO: Docs do not specify possible status values beyond "online"; verify.

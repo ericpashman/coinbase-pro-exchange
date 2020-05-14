@@ -1,31 +1,31 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module Coinbase.Exchange.Socket.Test where
 
+import Control.Concurrent
+import Control.Concurrent.Async
+import Control.Monad
+import Data.Aeson
+import Data.Aeson.QQ -- TODO: Replace with Aeson.QQ.Simple after
+                     -- updating to aeson-1.4.2.0 or newer
 
-import           Control.Concurrent
-import           Control.Concurrent.Async
-import           Control.Monad
-import           Data.Aeson
-import           Data.Aeson.QQ  -- TODO: Replace with Aeson.QQ.Simple after
-                                -- updating to aeson-1.4.2.0 or newer
-import           Data.ByteString.Lazy                 (fromStrict)
-import           Data.UUID
+import Data.ByteString.Lazy (fromStrict)
+import Data.UUID
 
-import           Test.Tasty
-import           Test.Tasty.HUnit
-import           Test.Tasty.QuickCheck          hiding (Success)
-import           Test.QuickCheck.Arbitrary
-import           Test.QuickCheck.Instances
+import Test.QuickCheck.Arbitrary
+import Test.QuickCheck.Instances
+import Test.Tasty
+import Test.Tasty.HUnit
+import Test.Tasty.QuickCheck hiding (Success)
 
-import qualified Network.WebSockets             as WS
+import qualified Network.WebSockets as WS
 
-import           Coinbase.Exchange.Private
-import           Coinbase.Exchange.Socket
-import           Coinbase.Exchange.Types
-import           Coinbase.Exchange.Types.Core  hiding (BookEntry(..))
+import Coinbase.Exchange.Private
+import Coinbase.Exchange.Socket
+import Coinbase.Exchange.Types
+import Coinbase.Exchange.Types.Core hiding (BookEntry(..))
 
 import qualified Coinbase.Exchange.Private.Test as P
 
@@ -43,73 +43,75 @@ import qualified Coinbase.Exchange.Private.Test as P
 -- We first verify we can receive at least 20 messages (i.e. a fixed minimum number)
 -- from the socket, before running the parsing tests.
 -------------------------------------
-
 tests :: ExchangeConf -> [ProductId] -> [Channel] -> TestTree
-tests conf pids chans = testGroup "Socket" $
-        -- See NOTE: [Connectivity Precondition]
-        [ testCase "Do I receive messages?"  (receiveSocket  conf pids chans)
-        , testCase "Parse Websocket Stream"  (parseSocket    conf pids chans (threadDelay $ 1000000 * 20))
-        , testCase "Decode Re-Encode Decode" (reencodeSocket conf pids chans)
-        ] ++
-        [propertyTests] ++
-        [docMessageTests]
+tests conf pids chans =
+  testGroup "Socket" $
+    -- See NOTE: [Connectivity Precondition]
+    [ testCase "Do I receive messages?" (receiveSocket conf pids chans)
+    , testCase "Parse Websocket Stream"
+        (parseSocket conf pids chans (threadDelay $ 1000000 * 20))
+    , testCase "Decode Re-Encode Decode" (reencodeSocket conf pids chans)
+    ] ++
+    [ propertyTests ] ++
+    [ docMessageTests ]
 
 -- A list of all WebSocket channels
 allChannels :: [Channel]
 allChannels = [minBound ..]
 
 receiveSocket :: ExchangeConf -> [ProductId] -> [Channel] -> IO ()
-receiveSocket conf pids chans = subscribe (apiType conf) pids chans $ \conn -> do
+receiveSocket conf pids chans =
+  subscribe (apiType conf) pids chans $ \conn -> do
     sequence_ $ replicate 20 (receiveAndDecode conn)
 
 -- Success: no parse errors found while running
 -- Failure: a parse error is found while running
 parseSocket :: ExchangeConf -> [ProductId] -> [Channel] -> IO a -> IO ()
-parseSocket conf pids chans challenge = subscribe (apiType conf) pids chans $ \conn -> do
+parseSocket conf pids chans challenge =
+  subscribe (apiType conf) pids chans $ \conn -> do
     waitCancelThreads challenge (forever $ receiveAndDecode conn)
     return ()
 
 -- FIXME! there's no guarantee we are hitting all order types.
 -- a more thorough test would be better.
 reencodeSocket :: ExchangeConf -> [ProductId] -> [Channel] -> IO ()
-reencodeSocket conf pids chans = subscribe (apiType conf) pids chans $ \conn -> do
+reencodeSocket conf pids chans =
+  subscribe (apiType conf) pids chans $ \conn -> do
     sequence_ $ replicate 1000 (decodeEncode conn)
 
 decodeEncode :: WS.Connection -> IO ()
 decodeEncode conn = do
-    ds <- WS.receiveData conn
-    let res = eitherDecode ds
-    case res :: Either String ExchangeMessage of
-        Left er -> assertFailure "Failure parsing data from exchange" >> print er
-        Right received -> do
-            let enc = encode received
-                dec = eitherDecode enc
-            if dec == res
-                then return ()
-                else do
-                    putStrLn $ "### original: " ++ show res
-                    putStrLn $ "### obtained: " ++ show dec
-                    assertFailure "decoded object is different from original"
-
-
+  ds <- WS.receiveData conn
+  let res = eitherDecode ds
+  case res :: Either String ExchangeMessage of
+    Left er -> assertFailure "Failure parsing data from exchange" >> print er
+    Right received -> do
+      let enc = encode received
+          dec = eitherDecode enc
+      if dec == res
+        then return ()
+        else do
+          putStrLn $ "### original: " ++ show res
+          putStrLn $ "### obtained: " ++ show dec
+          assertFailure "decoded object is different from original"
 
 receiveAndDecode :: WS.Connection -> IO ()
 receiveAndDecode conn = do
-    ds <- WS.receiveData conn
-    let res = eitherDecode {-$ trace (show ds) -} ds
-    case res :: Either String ExchangeMessage of
-        Left er -> print er   >> assertFailure "Parsing failure found"
-        Right v -> return ()
+  ds <- WS.receiveData conn
+  let res = eitherDecode ds {-$ trace (show ds) -}
+  case res :: Either String ExchangeMessage of
+    Left er -> print er >> assertFailure "Parsing failure found"
+    Right v -> return ()
 
 waitCancelThreads :: IO a -> IO b -> IO (Either a b)
 waitCancelThreads action1 action2 = do
-    a <- async action1
-    b <- async action2
-    c <- waitEither a b
-    case c of
-        Left  a -> cancel b
-        Right b -> cancel a
-    return c
+  a <- async action1
+  b <- async action2
+  c <- waitEither a b
+  case c of
+    Left a -> cancel b
+    Right b -> cancel a
+  return c
 
 --------------------------------------------------------------------------------
 -- OFFLINE UNIT TESTS
@@ -129,50 +131,59 @@ waitCancelThreads action1 action2 = do
 -- They're modified here just enough to make them resemble the messages actually
 -- produced by the API.
 
-docMessageTests = testGroup "Test parsing of example messages from official\
-  \ documentation"
-  [ testCase "Parse documented \"error\" message (`ErrorMsg`)" $
-      fromJSON docErrorMsg @?= Success expectErrorMsg
+docMessageTests =
+  testGroup
+    "Test parsing of example messages from official documentation"
+    [ testCase "Parse documented \"error\" message (`ErrorMsg`)" $
+        fromJSON docErrorMsg @?= Success expectedErrorMsg
   -- , testCase "Parse documented \"subscribe\" message (`Subscribe`)" $
-  --     fromJSON docSubscribe @?= Success expectSubscribe
-  , testCase "Parse documented \"subscriptions\" message (`SubscriptionsMsg`)" $
-      fromJSON docSubscriptionsMsg @?= Success expectSubscriptionsMsg
-  , testCase "Parse documented \"unsubscribe\" message #1 (`Unsubscribe`)" $
-      fromJSON docUnsubscribe1 @?= Success expectUnsubscribe1
-  , testCase "Parse documented \"unsubscribe\" message #2 (`Unsubscribe`)" $
-      fromJSON docUnsubscribe2 @?= Success expectUnsubscribe2
-  -- , testCase "Parse documented \"subscribe\" message for "heartbeat" channel (`Subscribe`)" $
-  --     fromJSON docSubscribeHeartbeat @?= Success expectSubscribeHeartbeat
-  , testCase "Parse documented \"heartbeat\" message (`HeartbeatMsg`)" $
-      fromJSON docHeartbeatMsg @?= Success expectHeartbeatMsg
-  -- , testCase "Parse documented \"subscribe\" message for "status" channel (`Subscribe`)" $
-  --     fromJSON docSubscribeStatus @?= Success expectSubscribeStatus
-  , testCase "Parse documented \"ticker\" message (`TickerMsg`)" $
-      fromJSON docTickerMsg @?= Success expectTickerMsg
-  , testCase "Parse documented \"snapshot\" message (`L2SnapshotMsg`)" $
-      fromJSON docL2SnapshotMsg @?= Success expectL2SnapshotMsg
-  , testCase "Parse documented \"received\" message for limit order (`ReceivedLimitMsg`)" $
-      fromJSON docReceivedLimitMsg @?= Success expectReceivedLimitMsg
-  , testCase "Parse documented \"received\" message for market order (`ReceivedMarketMsg`)" $
-      fromJSON docReceivedMarketMsg @?= Success expectReceivedMarketMsg
-  , testCase "Parse documented \"open\" message (`OpenMsg`)" $
-      fromJSON docOpenMsg @?= Success expectOpenMsg
-  , testCase "Parse documented \"done\" message (`DoneMsg`)" $
-      fromJSON docDoneMsg @?= Success expectDoneMsg
-  , testCase "Parse documented \"match\" message (`MatchMsg`)" $
-      fromJSON docMatchMsg @?= Success expectMatchMsg
-  , testCase "Parse documented \"change\" message for limit order (`ChangeLimitMsg`)" $
-      fromJSON docChangeLimitMsg @?= Success expectChangeLimitMsg
-  ]
+  --     fromJSON docSubscribe @?= Success expectedSubscribe
+    , testCase
+        "Parse documented \"subscriptions\" message (`SubscriptionsMsg`)" $
+        fromJSON docSubscriptionsMsg @?= Success expectedSubscriptionsMsg
+    , testCase "Parse documented \"unsubscribe\" message #1 (`Unsubscribe`)" $
+        fromJSON docUnsubscribe1 @?= Success expectedUnsubscribe1
+    , testCase "Parse documented \"unsubscribe\" message #2 (`Unsubscribe`)" $
+        fromJSON docUnsubscribe2 @?= Success expectedUnsubscribe2
+ -- , testCase "Parse documented \"subscribe\" message for "heartbeat" channel (`Subscribe`)" $
+ --     fromJSON docSubscribeHeartbeat @?= Success expectedSubscribeHeartbeat
+    , testCase "Parse documented \"heartbeat\" message (`HeartbeatMsg`)" $
+        fromJSON docHeartbeatMsg @?= Success expectedHeartbeatMsg
+ -- , testCase "Parse documented \"subscribe\" message for "status" channel (`Subscribe`)" $
+ --     fromJSON docSubscribeStatus @?= Success expectedSubscribeStatus
+    , testCase "Parse documented \"ticker\" message (`TickerMsg`)" $
+        fromJSON docTickerMsg @?= Success expectedTickerMsg
+    , testCase "Parse documented \"snapshot\" message (`L2SnapshotMsg`)" $
+        fromJSON docL2SnapshotMsg @?= Success expectedL2SnapshotMsg
+    , testCase
+        "Parse documented \"received\" message for limit order\
+        \ (`ReceivedLimitMsg`)" $
+        fromJSON docReceivedLimitMsg @?= Success expectedReceivedLimitMsg
+    , testCase
+        "Parse documented \"received\" message for market order\
+        \ (`ReceivedMarketMsg`)" $
+        fromJSON docReceivedMarketMsg @?= Success expectedReceivedMarketMsg
+    , testCase "Parse documented \"open\" message (`OpenMsg`)" $
+        fromJSON docOpenMsg @?= Success expectedOpenMsg
+    , testCase "Parse documented \"done\" message (`DoneMsg`)" $
+        fromJSON docDoneMsg @?= Success expectedDoneMsg
+    , testCase "Parse documented \"match\" message (`MatchMsg`)" $
+        fromJSON docMatchMsg @?= Success expectedMatchMsg
+    , testCase
+        "Parse documented \"change\" message for limit order\
+        \ (`ChangeLimitMsg`)" $
+        fromJSON docChangeLimitMsg @?= Success expectedChangeLimitMsg
+    ]
 
-docErrorMsg = [aesonQQ|
+docErrorMsg =
+  [aesonQQ|
   {
       "type": "error",
       "message": "error message"
   }
   |]
 
-expectErrorMsg = ErrorMsg {msgErrorMessage = "error message"}
+expectedErrorMsg = ErrorMsg {msgErrorMessage = "error message"}
 
 -- FIXME: The "subscribe" message below doesn't parse because the `Subscribe`
 -- constructor of our `SendExchange` type can't handle the object nested inside
@@ -201,13 +212,13 @@ expectErrorMsg = ErrorMsg {msgErrorMessage = "error message"}
 --   }
 --   |]
 --
--- expectSubscribe = undefined
-
+-- expectedSubscribe = undefined
 -- NOTE: Aeson chokes on the commas trailing the "product_ids" arrays that are
 -- present in the original (removed below). The JSON spec does not allow
 -- trailing commas, and I haven't seen any in messages received via the API.
 -- TODO: Ask Coinbase to fix this example?
-docSubscriptionsMsg = [aesonQQ|
+docSubscriptionsMsg =
+  [aesonQQ|
   {
       "type": "subscriptions",
       "channels": [
@@ -237,9 +248,30 @@ docSubscriptionsMsg = [aesonQQ|
   }
   |]
 
-expectSubscriptionsMsg = SubscriptionsMsg {msgSubscriptionsMsgs = [Subscription Level2 [ProductId {unProductId = "ETH-USD"},ProductId {unProductId = "ETH-EUR"}],Subscription Heartbeat [ProductId {unProductId = "ETH-USD"},ProductId {unProductId = "ETH-EUR"}],Subscription Ticker [ProductId {unProductId = "ETH-USD"},ProductId {unProductId = "ETH-EUR"},ProductId {unProductId = "ETH-BTC"}]]}
+expectedSubscriptionsMsg =
+  SubscriptionsMsg
+  { msgSubscriptionsMsgs =
+      [ Subscription
+          Level2
+          [ ProductId {unProductId = "ETH-USD"}
+          , ProductId {unProductId = "ETH-EUR"}
+          ]
+      , Subscription
+          Heartbeat
+          [ ProductId {unProductId = "ETH-USD"}
+          , ProductId {unProductId = "ETH-EUR"}
+          ]
+      , Subscription
+          Ticker
+          [ ProductId {unProductId = "ETH-USD"}
+          , ProductId {unProductId = "ETH-EUR"}
+          , ProductId {unProductId = "ETH-BTC"}
+          ]
+      ]
+  }
 
-docUnsubscribe1 = [aesonQQ|
+docUnsubscribe1 =
+  [aesonQQ|
   {
       "type": "unsubscribe",
       "product_ids": [
@@ -250,17 +282,20 @@ docUnsubscribe1 = [aesonQQ|
   }
   |]
 
-expectUnsubscribe1 = Unsubscribe [ProductId {unProductId = "ETH-USD"},ProductId {unProductId = "ETH-EUR"}] [Ticker]
+expectedUnsubscribe1 =
+  Unsubscribe
+    [ProductId {unProductId = "ETH-USD"}, ProductId {unProductId = "ETH-EUR"}]
+    [Ticker]
 
-docUnsubscribe2 = [aesonQQ|
+docUnsubscribe2 =
+  [aesonQQ|
   {
       "type": "unsubscribe",
       "channels": ["heartbeat"]
   }
   |]
 
-expectUnsubscribe2 = Unsubscribe [] [Heartbeat]
-
+expectedUnsubscribe2 = Unsubscribe [] [Heartbeat]
 
 -- TODO: The docs contain two partial example objects related to authenticated
 -- "subscribe" requests and the added private fields on authenticated feed
@@ -284,7 +319,6 @@ expectUnsubscribe2 = Unsubscribe [] [Heartbeat]
 --     "passphrase": "...",
 --     "timestamp": "..."
 -- }
-
 -- FIXME: The following example doesn't parse for the same reason as the other
 -- "subscribe" examples; see comment above.
 -- docSubscribeHeartbeat = [aesonQQ|
@@ -293,9 +327,9 @@ expectUnsubscribe2 = Unsubscribe [] [Heartbeat]
 --       "channels": [{ "name": "heartbeat", "product_ids": ["ETH-EUR"] }]
 --   }  |]
 --
--- expectSubscribeHeartbeat = undefined
-
-docHeartbeatMsg = [aesonQQ|
+-- expectedSubscribeHeartbeat = undefined
+docHeartbeatMsg =
+  [aesonQQ|
   {
       "type": "heartbeat",
       "sequence": 90,
@@ -305,8 +339,15 @@ docHeartbeatMsg = [aesonQQ|
   }
   |]
 
-expectHeartbeatMsg = HeartbeatMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 90}, msgLastTradeId = TradeId {unTradeId = 20}}
-  where time = read "2014-11-07 08:19:28.464459 UTC"
+expectedHeartbeatMsg =
+  HeartbeatMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 90}
+  , msgLastTradeId = TradeId {unTradeId = 20}
+  }
+  where
+    time = read "2014-11-07 08:19:28.464459 UTC"
 
 -- FIXME: The following example doesn't parse for the same reason as the other
 -- "subscribe" examples; see comment above.
@@ -316,8 +357,7 @@ expectHeartbeatMsg = HeartbeatMsg {msgTime = time, msgProductId = ProductId {unP
 --     "channels": [{ "name": "status"}]
 -- }
 --
--- expectSubscribeStatus = undefined
-
+-- expectedSubscribeStatus = undefined
 -- FIXME: The following example does not parse because the "details" objects are
 -- empty. These parse into our `CurrencyDetails` type, and I don't think the
 -- object is actually ever empty in messages actually produced by the API.
@@ -376,13 +416,13 @@ expectHeartbeatMsg = HeartbeatMsg {msgTime = time, msgProductId = ProductId {unP
 --   }
 --   |]
 --
--- expectStatusMsg = undefined
-
+-- expectedStatusMsg = undefined
 -- TODO: Check the fields on the below message type against what the API
 -- actually produces. I think this message may now have more fields than are
 -- documented.
 -- NOTE: Comment removed from original.
-docTickerMsg = [aesonQQ|
+docTickerMsg =
+  [aesonQQ|
   {
       "type": "ticker",
       "trade_id": 20153558,
@@ -397,15 +437,27 @@ docTickerMsg = [aesonQQ|
   }
   |]
 
-expectTickerMsg = TickerMsg {msgTime = time, msgSequence = Sequence {unSequence = 3262786978}, msgProductId = ProductId {unProductId = "BTC-USD"}, msgTradeId = TradeId {unTradeId = 20153558}, msgPrice = 4388.01, msgSide = Buy, msgLastSize = 0.03, msgBestAsk = Just 4388.01, msgBestBid = Just 4388.0}
-  where time = read "2017-09-02 17:05:49.25 UTC"
+expectedTickerMsg =
+  TickerMsg
+  { msgTime = time
+  , msgSequence = Sequence {unSequence = 3262786978}
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgTradeId = TradeId {unTradeId = 20153558}
+  , msgPrice = 4388.01
+  , msgSide = Buy
+  , msgLastSize = 0.03
+  , msgBestAsk = Just 4388.01
+  , msgBestBid = Just 4388.0
+  }
+  where
+    time = read "2017-09-02 17:05:49.25 UTC"
 
 -- NOTE: The docs don't contain an example of the abbreviated version of the
 -- above message sent immediately upon subscribing to the "ticker" channel
 -- (which we parse into `StartTicker`).
 -- TODO: Ask Coinbase to document this?
-
-docL2SnapshotMsg = [aesonQQ|
+docL2SnapshotMsg =
+  [aesonQQ|
   {
       "type": "snapshot",
       "product_id": "BTC-USD",
@@ -414,9 +466,15 @@ docL2SnapshotMsg = [aesonQQ|
   }
   |]
 
-expectL2SnapshotMsg = L2SnapshotMsg {msgProductId = ProductId {unProductId = "BTC-USD"}, msgAsks = [L2BookEntry 10102.55 0.57753524], msgBids = [L2BookEntry 10101.1 0.4505414]}
+expectedL2SnapshotMsg =
+  L2SnapshotMsg
+  { msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgAsks = [L2BookEntry 10102.55 0.57753524]
+  , msgBids = [L2BookEntry 10101.1 0.4505414]
+  }
 
-docL2UpdateMsg = [aesonQQ|
+docL2UpdateMsg =
+  [aesonQQ|
   {
     "type": "l2update",
     "product_id": "BTC-USD",
@@ -431,10 +489,17 @@ docL2UpdateMsg = [aesonQQ|
   }
   |]
 
-expectL2UpdateMsg =L2UpdateMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgChanges = [BookChange Buy 10101.8 0.162567]}
-  where time = read "2019-08-14 20:42:27.265 UTC"
+expectedL2UpdateMsg =
+  L2UpdateMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgChanges = [BookChange Buy 10101.8 0.162567]
+  }
+  where
+    time = read "2019-08-14 20:42:27.265 UTC"
 
-docReceivedLimitMsg = [aesonQQ|
+docReceivedLimitMsg =
+  [aesonQQ|
   {
       "type": "received",
       "time": "2014-11-07T08:19:27.028459Z",
@@ -448,11 +513,23 @@ docReceivedLimitMsg = [aesonQQ|
   }
   |]
 
-expectReceivedLimitMsg = ReceivedLimitMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 10}, msgOrderId = OrderId {unOrderId = orderId}, msgSide = Buy, msgClientOid = Nothing, msgPrice = 502.1, msgSize = 1.34}
-  where time = read "2014-11-07 08:19:27.028459 UTC"
-        orderId = read "d50ec984-77a8-460a-b958-66f114b0de9b"
+expectedReceivedLimitMsg =
+  ReceivedLimitMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 10}
+  , msgOrderId = OrderId {unOrderId = orderId}
+  , msgSide = Buy
+  , msgClientOid = Nothing
+  , msgPrice = 502.1
+  , msgSize = 1.34
+  }
+  where
+    time = read "2014-11-07 08:19:27.028459 UTC"
+    orderId = read "d50ec984-77a8-460a-b958-66f114b0de9b"
 
-docReceivedMarketMsg = [aesonQQ|
+docReceivedMarketMsg =
+  [aesonQQ|
   {
       "type": "received",
       "time": "2014-11-09T08:19:27.028459Z",
@@ -465,11 +542,22 @@ docReceivedMarketMsg = [aesonQQ|
   }
   |]
 
-expectReceivedMarketMsg = ReceivedMarketMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 12}, msgOrderId = OrderId {unOrderId = orderId}, msgSide = Buy, msgClientOid = Nothing, msgMarketBounds = Right (Nothing,3000.234)}
-  where time = read "2014-11-09 08:19:27.028459 UTC"
-        orderId = read "dddec984-77a8-460a-b958-66f114b0de9b"
+expectedReceivedMarketMsg =
+  ReceivedMarketMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 12}
+  , msgOrderId = OrderId {unOrderId = orderId}
+  , msgSide = Buy
+  , msgClientOid = Nothing
+  , msgMarketBounds = Right (Nothing, 3000.234)
+  }
+  where
+    time = read "2014-11-09 08:19:27.028459 UTC"
+    orderId = read "dddec984-77a8-460a-b958-66f114b0de9b"
 
-docOpenMsg = [aesonQQ|
+docOpenMsg =
+  [aesonQQ|
   {
       "type": "open",
       "time": "2014-11-07T08:19:27.028459Z",
@@ -482,12 +570,23 @@ docOpenMsg = [aesonQQ|
   }
   |]
 
-expectOpenMsg = OpenMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 10}, msgOrderId = OrderId {unOrderId = orderId}, msgSide = Sell, msgRemainingSize = 1.0, msgPrice = 200.2}
-  where time = read "2014-11-07 08:19:27.028459 UTC"
-        orderId = read "d50ec984-77a8-460a-b958-66f114b0de9b"
+expectedOpenMsg =
+  OpenMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 10}
+  , msgOrderId = OrderId {unOrderId = orderId}
+  , msgSide = Sell
+  , msgRemainingSize = 1.0
+  , msgPrice = 200.2
+  }
+  where
+    time = read "2014-11-07 08:19:27.028459 UTC"
+    orderId = read "d50ec984-77a8-460a-b958-66f114b0de9b"
 
 -- NOTE: Comment removed from original.
-docDoneMsg = [aesonQQ|
+docDoneMsg =
+  [aesonQQ|
   {
       "type": "done",
       "time": "2014-11-07T08:19:27.028459Z",
@@ -501,11 +600,23 @@ docDoneMsg = [aesonQQ|
   }
   |]
 
-expectDoneMsg = DoneMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 10}, msgOrderId = OrderId {unOrderId = orderId}, msgSide = Sell, msgReason = Filled, msgMaybePrice = Just 200.2, msgMaybeRemSize = Just 0.0}
-  where time = read "2014-11-07 08:19:27.028459 UTC"
-        orderId = read "d50ec984-77a8-460a-b958-66f114b0de9b"
+expectedDoneMsg =
+  DoneMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 10}
+  , msgOrderId = OrderId {unOrderId = orderId}
+  , msgSide = Sell
+  , msgReason = Filled
+  , msgMaybePrice = Just 200.2
+  , msgMaybeRemSize = Just 0.0
+  }
+  where
+    time = read "2014-11-07 08:19:27.028459 UTC"
+    orderId = read "d50ec984-77a8-460a-b958-66f114b0de9b"
 
-docMatchMsg = [aesonQQ|
+docMatchMsg =
+  [aesonQQ|
   {
       "type": "match",
       "trade_id": 10,
@@ -520,11 +631,22 @@ docMatchMsg = [aesonQQ|
   }
   |]
 
-expectMatchMsg = MatchMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 50}, msgSide = Sell, msgTradeId = TradeId {unTradeId = 10}, msgMakerOrderId = OrderId {unOrderId = makerOrderId}, msgTakerOrderId = OrderId {unOrderId = takerOrderId}, msgSize = 5.23512, msgPrice = 400.23}
-  where time = read "2014-11-07 08:19:27.028459 UTC"
-        makerOrderId = read "ac928c66-ca53-498f-9c13-a110027a60e8"
-        takerOrderId = read "132fb6ae-456b-4654-b4e0-d681ac05cea1"
-
+expectedMatchMsg =
+  MatchMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 50}
+  , msgSide = Sell
+  , msgTradeId = TradeId {unTradeId = 10}
+  , msgMakerOrderId = OrderId {unOrderId = makerOrderId}
+  , msgTakerOrderId = OrderId {unOrderId = takerOrderId}
+  , msgSize = 5.23512
+  , msgPrice = 400.23
+  }
+  where
+    time = read "2014-11-07 08:19:27.028459 UTC"
+    makerOrderId = read "ac928c66-ca53-498f-9c13-a110027a60e8"
+    takerOrderId = read "132fb6ae-456b-4654-b4e0-d681ac05cea1"
 
 -- FIXME: There are additional fields in "match" messages when authenticated.
 -- Test the following documented fields; presumably there are corresponding
@@ -534,8 +656,8 @@ expectMatchMsg = MatchMsg {msgTime = time, msgProductId = ProductId {unProductId
 -- user_id: "5844eceecf7e803e259d0365",
 -- taker_profile_id: "765d1549-9660-4be2-97d4-fa2d65fa3352",
 -- profile_id: "765d1549-9660-4be2-97d4-fa2d65fa3352"-
-
-docChangeLimitMsg = [aesonQQ|
+docChangeLimitMsg =
+  [aesonQQ|
   {
       "type": "change",
       "time": "2014-11-07T08:19:27.028459Z",
@@ -549,18 +671,29 @@ docChangeLimitMsg = [aesonQQ|
   }
   |]
 
-expectChangeLimitMsg = ChangeLimitMsg {msgTime = time, msgProductId = ProductId {unProductId = "BTC-USD"}, msgSequence = Sequence {unSequence = 80}, msgOrderId = OrderId {unOrderId = orderId}, msgSide = Sell, msgMaybePrice = Just 400.23, msgNewSize = 5.23512, msgOldSize = 12.234412}
-  where time = read "2014-11-07 08:19:27.028459 UTC"
-        orderId = read "ac928c66-ca53-498f-9c13-a110027a60e8"
+expectedChangeLimitMsg =
+  ChangeLimitMsg
+  { msgTime = time
+  , msgProductId = ProductId {unProductId = "BTC-USD"}
+  , msgSequence = Sequence {unSequence = 80}
+  , msgOrderId = OrderId {unOrderId = orderId}
+  , msgSide = Sell
+  , msgMaybePrice = Just 400.23
+  , msgNewSize = 5.23512
+  , msgOldSize = 12.234412
+  }
+  where
+    time = read "2014-11-07 08:19:27.028459 UTC"
+    orderId = read "ac928c66-ca53-498f-9c13-a110027a60e8"
 
 -- NOTE: The above example "change" message for a limit order is shown twice in
 -- the docs, and there is no example of a "change" message for a market order.
 -- Presumably the second example should document a "change" message for a market
 -- order.
 --TODO: Ask Coinbase to fix this?
-
 --TODO: `ActivateMsg` isn't yet implemented
-docActivateMsg = [aesonQQ|
+docActivateMsg =
+  [aesonQQ|
   {
     "type": "activate",
     "product_id": "test-product",
@@ -578,7 +711,7 @@ docActivateMsg = [aesonQQ|
   }
   |]
 
-expectActivageMsg = undefined
+expectedActivageMsg = undefined
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -586,37 +719,39 @@ expectActivageMsg = undefined
 --
 -- These tests use QuickCheck to verify the Aeson instances for all types
 -- involved in messages sent and received via the WebSocket API.
-
 propertyTests :: TestTree
-propertyTests = testGroup "QuickCheck property tests"
-  [ testProperty "Aeson instances are inverses (`Channel`)" $
+propertyTests =
+  testGroup
+    "QuickCheck property tests"
+    [ testProperty "Aeson instances are inverses (`Channel`)" $
       (decodeInvertsEncode :: Channel -> Bool)
-  , testProperty "Aeson instances are inverses (`Subscription`)" $
+    , testProperty "Aeson instances are inverses (`Subscription`)" $
       (decodeInvertsEncode :: Subscription -> Bool)
-  , testProperty "Aeson instances are inverses (`Status Currency`)" $
+    , testProperty "Aeson instances are inverses (`Status Currency`)" $
       (decodeInvertsEncode :: Status Currency -> Bool)
-  , testProperty "Aeson instances are inverses (`Status Product`)" $
+    , testProperty "Aeson instances are inverses (`Status Product`)" $
       (decodeInvertsEncode :: Status Product -> Bool)
-  , testProperty "Aeson instances are inverses (`Currency`)" $
+    , testProperty "Aeson instances are inverses (`Currency`)" $
       (decodeInvertsEncode :: Currency -> Bool)
-  , testProperty "Aeson instances are inverses (`Product`)" $
+    , testProperty "Aeson instances are inverses (`Product`)" $
       (decodeInvertsEncode :: Product -> Bool)
-  , testProperty "Aeson instances are inverses (`CurrencyDetails`)" $
+    , testProperty "Aeson instances are inverses (`CurrencyDetails`)" $
       (decodeInvertsEncode :: CurrencyDetails -> Bool)
-  , testProperty "Aeson instances are inverses (`L2BookEntry`)" $
+    , testProperty "Aeson instances are inverses (`L2BookEntry`)" $
       (decodeInvertsEncode :: L2BookEntry -> Bool)
-  , testProperty "Aeson instances are inverses (`BookChange`)" $
+    , testProperty "Aeson instances are inverses (`BookChange`)" $
       (decodeInvertsEncode :: BookChange -> Bool)
-  , testProperty "Aeson instances are inverses (`ExchangeMessage`)" $
+    , testProperty "Aeson instances are inverses (`ExchangeMessage`)" $
       (decodeInvertsEncode :: ExchangeMessage -> Bool)
-  , testProperty "Aeson instances are inverses (`SendExchangeMessage`)" $
+    , testProperty "Aeson instances are inverses (`SendExchangeMessage`)" $
       (decodeInvertsEncode :: SendExchangeMessage -> Bool)
-  ]
+    ]
 
 decodeInvertsEncode :: (Eq a, FromJSON a, ToJSON a) => a -> Bool
-decodeInvertsEncode x = case (decode $ encode $ x) of
-  Just x' -> x == x'
-  Nothing -> False
+decodeInvertsEncode x =
+  case (decode $ encode $ x) of
+    Just x' -> x == x'
+    Nothing -> False
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
@@ -628,7 +763,6 @@ decodeInvertsEncode x = case (decode $ encode $ x) of
 -- that because I felt bad about introducing several new dependencies already,
 -- but it may be worth the extra dependency to cut down on the boilerplate and
 -- line count here.
-
 instance Arbitrary Channel where
   arbitrary = elements allChannels
 
@@ -644,44 +778,34 @@ instance Arbitrary (Status Product) where
 -- TODO: The two instances for `Status` can be combined in a single instance for
 -- `Status a` with `liftArbitrary`, but it isn't available in the old version
 -- of QuickCheck we're using.
-
 instance Arbitrary Product where
-  arbitrary = Product
-    <$> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
+  arbitrary =
+    Product <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary
 
 instance Arbitrary Currency where
-  arbitrary = Currency
-    <$> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
+  arbitrary =
+    Currency <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary <*>
+    arbitrary
 
 instance Arbitrary CurrencyDetails where
-  arbitrary = CurrencyDetails
-    <$> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
-    <*> arbitrary
+  arbitrary =
+    CurrencyDetails <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+    arbitrary <*>
+    arbitrary
 
 instance Arbitrary L2BookEntry where
   arbitrary = L2BookEntry <$> arbitrary <*> arbitrary
@@ -696,41 +820,69 @@ instance Arbitrary SendExchangeMessage where
     elements [sub, unsub]
 
 instance Arbitrary ExchangeMessage where
-  arbitrary = oneof
-    [ ErrorMsg <$> arbitrary
-    , SubscriptionsMsg <$> arbitrary
-    , HeartbeatMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , StatusMsg <$> arbitrary <*> arbitrary
-    , StartTickerMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary
-    , TickerMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , L2SnapshotMsg <$> arbitrary <*> arbitrary <*> arbitrary
-    , L2UpdateMsg <$> arbitrary <*> arbitrary <*> arbitrary
-    , ReceivedLimitMsg <$> arbitrary  <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , ReceivedMarketMsg <$> arbitrary  <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary
-    , OpenMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary
-    , MatchMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , LastMatchMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , DoneMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , ChangeLimitMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-    , ChangeMarketMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-        <*> arbitrary <*> arbitrary <*> arbitrary
-    ]
+  arbitrary =
+    oneof
+      [ ErrorMsg <$> arbitrary
+      , SubscriptionsMsg <$> arbitrary
+      , HeartbeatMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+      , StatusMsg <$> arbitrary <*> arbitrary
+      , StartTickerMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary
+      , TickerMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , L2SnapshotMsg <$> arbitrary <*> arbitrary <*> arbitrary
+      , L2UpdateMsg <$> arbitrary <*> arbitrary <*> arbitrary
+      , ReceivedLimitMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , ReceivedMarketMsg <$> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , OpenMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , MatchMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , LastMatchMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , DoneMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , ChangeLimitMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      , ChangeMarketMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
+        arbitrary <*>
+        arbitrary <*>
+        arbitrary
+      ]
 
 --------------------------------------------------------------------------------
 -- `Arbitrary` instances for types defined in `... .MarketData.Types`
 -- FIXME: These should be moved to the module in which these types are tested,
 -- but the types themselves should probably move to `... .Core.Types` or
 -- `... Core`.
-
 instance Arbitrary Size where
   arbitrary = Size <$> arbitrary
 
@@ -768,7 +920,6 @@ instance Arbitrary Reason where
   arbitrary = elements [Filled, Canceled]
 
 --------------------------------------------------------------------------------
-
 -- FIXME: This is a hack. Newer versions of the `quickcheck-instances` package
 -- provide a proper `Arbitrary` instance for `UUID`. Delete this after updating
 -- package dependencies.
