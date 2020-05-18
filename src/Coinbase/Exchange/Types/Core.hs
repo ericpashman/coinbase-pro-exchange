@@ -138,7 +138,8 @@ instance FromJSON Reason where
 ----
 
 newtype CoinScientific = CoinScientific { unCoinScientific :: Scientific }
-    deriving (Eq, Ord, Num, Fractional, Real, RealFrac, Show, Read, Data, Typeable, NFData, Hashable)
+    deriving (Eq, Ord, Num, Fractional, Real, RealFrac, Show, Read, Data
+             , Typeable, NFData, Hashable, Generic)
 
 -- Shows 8 decimal places (needs to be adapted for prices and costs in USD)
 instance ToJSON CoinScientific where

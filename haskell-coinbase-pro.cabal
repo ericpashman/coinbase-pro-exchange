@@ -119,5 +119,6 @@ test-suite test-coinbase
                     ,   aeson
                     ,   aeson-qq
                     ,   unordered-containers
+                    ,   generic-random
 
                     ,   haskell-coinbase-pro

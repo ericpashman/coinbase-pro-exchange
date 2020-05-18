@@ -10,9 +10,11 @@ import Control.Monad
 import Data.Aeson
 import Data.Aeson.QQ -- TODO: Replace with Aeson.QQ.Simple after
                      -- updating to aeson-1.4.2.0 or newer
-
 import Data.ByteString.Lazy (fromStrict)
 import Data.UUID
+
+import Generic.Random.Generic --TODO: The final `.Generic` will go away after
+                              -- updating to newer version
 
 import Test.QuickCheck.Arbitrary
 import Test.QuickCheck.Instances
@@ -767,116 +769,37 @@ instance Arbitrary Channel where
   arbitrary = elements allChannels
 
 instance Arbitrary Subscription where
-  arbitrary = Subscription <$> arbitrary <*> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary (Status Currency) where
-  arbitrary = elements [Online, Offline]
+  arbitrary = genericArbitraryU
 
 instance Arbitrary (Status Product) where
-  arbitrary = elements [Online, Offline]
+  arbitrary = genericArbitraryU
 
 -- TODO: The two instances for `Status` can be combined in a single instance for
 -- `Status a` with `liftArbitrary`, but it isn't available in the old version
 -- of QuickCheck we're using.
 instance Arbitrary Product where
-  arbitrary =
-    Product <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary Currency where
-  arbitrary =
-    Currency <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary <*>
-    arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary CurrencyDetails where
-  arbitrary =
-    CurrencyDetails <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-    arbitrary <*>
-    arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary L2BookEntry where
-  arbitrary = L2BookEntry <$> arbitrary <*> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary BookChange where
-  arbitrary = BookChange <$> arbitrary <*> arbitrary <*> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary SendExchangeMessage where
-  arbitrary = do
-    sub <- Subscribe <$> arbitrary <*> arbitrary
-    unsub <- Unsubscribe <$> arbitrary <*> arbitrary
-    elements [sub, unsub]
+  arbitrary = genericArbitraryU
 
 instance Arbitrary ExchangeMessage where
-  arbitrary =
-    oneof
-      [ ErrorMsg <$> arbitrary
-      , SubscriptionsMsg <$> arbitrary
-      , HeartbeatMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-      , StatusMsg <$> arbitrary <*> arbitrary
-      , StartTickerMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary
-      , TickerMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , L2SnapshotMsg <$> arbitrary <*> arbitrary <*> arbitrary
-      , L2UpdateMsg <$> arbitrary <*> arbitrary <*> arbitrary
-      , ReceivedLimitMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , ReceivedMarketMsg <$> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , OpenMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , MatchMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , LastMatchMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , DoneMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , ChangeLimitMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      , ChangeMarketMsg <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*>
-        arbitrary <*>
-        arbitrary <*>
-        arbitrary
-      ]
+  arbitrary = genericArbitraryU
 
 --------------------------------------------------------------------------------
 -- `Arbitrary` instances for types defined in `... .MarketData.Types`
@@ -884,40 +807,40 @@ instance Arbitrary ExchangeMessage where
 -- but the types themselves should probably move to `... .Core.Types` or
 -- `... Core`.
 instance Arbitrary Size where
-  arbitrary = Size <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary Price where
-  arbitrary = Price <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary Cost where
-  arbitrary = Cost <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary CurrencyId where
-  arbitrary = CurrencyId <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary ProductId where
-  arbitrary = ProductId <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary Side where
-  arbitrary = elements [Buy, Sell]
+  arbitrary = genericArbitraryU
 
 instance Arbitrary CoinScientific where
-  arbitrary = CoinScientific <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary Sequence where
-  arbitrary = Sequence <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary TradeId where
-  arbitrary = TradeId <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary OrderId where
-  arbitrary = OrderId <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary ClientOrderId where
-  arbitrary = ClientOrderId <$> arbitrary
+  arbitrary = genericArbitraryU
 
 instance Arbitrary Reason where
-  arbitrary = elements [Filled, Canceled]
+  arbitrary = genericArbitraryU
 
 --------------------------------------------------------------------------------
 -- FIXME: This is a hack. Newer versions of the `quickcheck-instances` package
