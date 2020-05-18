@@ -759,12 +759,7 @@ decodeInvertsEncode x =
 --------------------------------------------------------------------------------
 -- `Arbitrary` instances for types defined in `... .Socket.Types`, for use
 -- in property tests using QuickCheck
---
--- NOTE/TODO/FIXME: Almost all of these instances can be implemented generically
--- using the functionality provided by the `generic-random` library. I didn't do
--- that because I felt bad about introducing several new dependencies already,
--- but it may be worth the extra dependency to cut down on the boilerplate and
--- line count here.
+
 instance Arbitrary Channel where
   arbitrary = elements allChannels
 
