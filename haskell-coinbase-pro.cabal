@@ -104,6 +104,7 @@ test-suite test-coinbase
                     ,   tasty-hunit
                     ,   QuickCheck
                     ,   quickcheck-instances
+                    ,   generic-random
 
                     ,   uuid
                     ,   bytestring
@@ -117,8 +118,6 @@ test-suite test-coinbase
                     ,   async
                     ,   websockets
                     ,   aeson
-                    ,   aeson-qq
                     ,   unordered-containers
-                    ,   generic-random
 
                     ,   haskell-coinbase-pro
